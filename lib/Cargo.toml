@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.86"
 chrono = "0.4.38"
 ratatui = "0.26.3"
+sqlx = { version = "0.7.4", features = ["sqlite"] }

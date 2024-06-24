@@ -1,8 +1,14 @@
 //! The types and structs to represent the tables in the database, as
 //! well as basic database interaction functions
 
+use std::path::PathBuf;
 use ratatui::style::Color;
 use chrono::{DateTime, TimeDelta, Local};
+use sqlx::{migrate::MigrateDatabase, prelude::*, Sqlite, SqlitePool, Pool};
+use anyhow::{self, Ok};
+
+/// The DB URL. Need to experiment to see what works best.
+pub const DB_URL: &str = "sqlite://~/.plannrs.db";
 
 /// Tags are used to group data by subject - for example Maths or Chores.
 /// These can be represented in the TUI using different colours. The colours
@@ -82,3 +88,90 @@ pub struct Plan {
     /// soon.
     pub(crate) porsmo: bool,
 }
+
+/// This function gets a handle to a database described by DB_URL.
+/// 
+/// # Table information
+/// ```sql
+/// TABLE Tag (
+///     ID INT NOT NULL,
+///     TagName TEXT NOT NULL,
+///     Border TINYINT NOT NULL,
+///     Fill TINYINT NOT NULL,
+///     Color TINYINT NOT NULL,
+///     PRIMARY KEY (ID)
+/// );
+/// 
+/// TABLE Plan (
+///     ID INT NOT NULL,
+///     PlanName TEXT NOT NULL,
+///     Descr TEXT NOT NULL,
+///     StartTime INT NOT NULL,
+///     Until INT NOT NULL,
+///     Advance INT NOT NULL, 
+///     Done BOOLEAN NOT NULL,
+///     TagID INT NOT NULL,
+///     Notify BOOLEAN NOT NULL,
+///     Porsmo BOOLEAN NOT NULL,
+///     PRIMARY KEY (ID),
+///     FOREIGN KEY (TagID) REFERENCES Tag(ID)
+/// );
+/// ```
+/// # Notes
+/// We use `TINYINT` for the ANSI colour values because we don't need it to be 
+/// any bigger. `StartTime` and `Until` are `DateTime`s, but Sqlite requires
+/// storage as an `INT`. This will represent UNIX Epoch time. `Advance` is in seconds.
+/// 
+pub async fn create_or_get_handle() -> anyhow::Result<Box<Pool<Sqlite>>> {
+    match !Sqlite::database_exists(DB_URL).await? {
+        true => {
+            println!("Database found...");
+            Ok(Box::new(SqlitePool::connect(DB_URL).await?))
+        },
+        false => {
+            // We will try and keep our transactions as transparent with the
+            // user on run, this is so that if errors happen here then they
+            // can easily be sent on as an issue.
+            println!("Database not found, creating new...");
+
+            // Get pool connection
+            let db = SqlitePool::connect(DB_URL).await?;
+
+            // Attempt to make the Tag Table, print results
+            let tag_result = sqlx::query("
+                CREATE TABLE IF NOT EXISTS Tag (
+                    ID INT NOT NULL,
+                    TagName TEXT NOT NULL,
+                    Border TINYINT NOT NULL,
+                    Fill TINYINT NOT NULL,
+                    Color TINYINT NOT NULL,
+                    PRIMARY KEY (ID)
+                );
+            ").execute(&db).await?;
+            println!("Tag Table... Status: {:?}", tag_result);
+
+            // Attempt create plan table, print results.
+            let plan_result = sqlx::query("
+                CREATE TABLE IF NOT EXISTS Plan (
+                    ID INT NOT NULL,
+                    PlanName TEXT NOT NULL,
+                    Descr TEXT NOT NULL,
+                    StartTime INT NOT NULL,
+                    Until INT NOT NULL,
+                    Advance INT NOT NULL, 
+                    Done BOOLEAN NOT NULL,
+                    TagID INT NOT NULL,
+                    Notify BOOLEAN NOT NULL,
+                    Porsmo BOOLEAN NOT NULL,
+                    PRIMARY KEY (ID),
+                    FOREIGN KEY (TagID) REFERENCES Tag(ID)
+                );
+            ").execute(&db).await?;
+            println!("Plan table... Status: {:?}", plan_result);
+
+            println!("All seems OK... returning database handle...");
+            Ok(Box::new(db))
+        },
+    }
+}
+
