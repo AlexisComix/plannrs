@@ -6,9 +6,9 @@ use ratatui::style::Color;
 use chrono::{DateTime, TimeDelta, Local};
 use sqlx::{migrate::MigrateDatabase, prelude::*, Sqlite, SqlitePool, Pool};
 use anyhow::{self, Ok};
-
-/// The DB URL. Need to experiment to see what works best.
-pub const DB_URL: &str = "sqlite://~/.plannrs.db";
+use dotenvy;
+use std::env;
+use directories;
 
 /// Tags are used to group data by subject - for example Maths or Chores.
 /// These can be represented in the TUI using different colours. The colours
@@ -89,7 +89,7 @@ pub struct Plan {
     pub(crate) porsmo: bool,
 }
 
-/// This function gets a handle to a database described by DB_URL.
+/// This function gets a handle to a database described by db_url.
 /// 
 /// # Table information
 /// ```sql
@@ -123,19 +123,29 @@ pub struct Plan {
 /// storage as an `INT`. This will represent UNIX Epoch time. `Advance` is in seconds.
 /// 
 pub async fn create_or_get_handle() -> anyhow::Result<Box<Pool<Sqlite>>> {
-    match !Sqlite::database_exists(DB_URL).await? {
+    // Initialise env
+    println!("Initialise filesystem...");
+    let dirs = directories::BaseDirs::new()
+        .ok_or("bleh")
+        .expect("Error getting home directory");
+    let home_dir = dirs.home_dir().display();
+    let db_path = format!("{home_dir}/.plannrs.sqlite");
+    let db_url = &format!("sqlite://{db_path}");
+
+    match Sqlite::database_exists(db_url).await? {
         true => {
             println!("Database found...");
-            Ok(Box::new(SqlitePool::connect(DB_URL).await?))
+            Ok(Box::new(SqlitePool::connect(db_url).await?))
         },
         false => {
             // We will try and keep our transactions as transparent with the
             // user on run, this is so that if errors happen here then they
             // can easily be sent on as an issue.
             println!("Database not found, creating new...");
+            std::fs::File::create(db_path)?;
 
             // Get pool connection
-            let db = SqlitePool::connect(DB_URL).await?;
+            let db = SqlitePool::connect(db_url).await?;
 
             // Attempt to make the Tag Table, print results
             let tag_result = sqlx::query("
